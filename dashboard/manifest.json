@@ -3,7 +3,7 @@
   "label": "Quota Router",
   "description": "Subscription/credit gauges and model routes for your Hermes bots; hold, force, mode and thresholds.",
   "icon": "Zap",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "tab": {
     "path": "/quota-router",
     "position": "after:analytics"
