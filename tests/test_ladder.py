@@ -71,5 +71,20 @@ cleanup(tmp)
 m, tmp = load_engine()
 pol = m.load_policy()
 R.check(all(pol["kinds"][p] != "metered" for p, _ in pol["classes"]["sensitive"]), "example 'sensitive' class has no metered rung")
+# a provider disabled in the bot's own config is never a destination (2026-09-28 incident: whole fleet
+# sent to copilot, which every profile has providers.copilot.enabled: false -> "Model resolution failed")
+m, tmp = load_engine(allow_metered)
+m._edit_policy(lambda d: d.__setitem__("mode", "enforce"))
+pol, st = m.load_policy(), {}
+q = readings(anthropic={"session": 100}, **{"openai-codex": {"weekly": 75}}, nous={"ok": False}, copilot={"ok": True})
+ch = m.decide(pol, q, st, off=lambda b: {"copilot"})
+R.check(all(c["to"][0] != "copilot" for c in ch), "disabled provider (copilot) never chosen")
+ch_all = m.decide(pol, q, st, off=lambda b: set())
+R.check(any(c["to"][0] == "copilot" for c in ch_all), "control: same readings without the block do pick copilot")
+# stranded on a disabled rung with nothing better -> back to rung 0
+wk = [s for s, c in pol["scopes"].items() if len(pol["classes"][c]) > 3 and pol["classes"][c][3][0] == "copilot"][0]
+ch = m.decide(pol, readings(anthropic={"weekly": 100}, **{"openai-codex": {"weekly": 100}}, nous={"ok": False},
+                            deepseek={"balance_usd": 0}), {wk: 3}, off=lambda b: {"copilot"})
+R.check(any(c["scope"] == wk and c["rung"] == 0 for c in ch), "stranded on disabled provider -> back to rung 0")
 cleanup(tmp)
 R.done()

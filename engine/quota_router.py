@@ -259,29 +259,53 @@ def _t(policy):
     return {**policy["thresholds"], "_allow_metered": bool(policy.get("allow_metered", False))}
 
 
-def decide(policy, q, state, skip=()):
+def disabled_providers(bot, cache=None):
+    """Providers the bot's own config switches off (providers.<p>.enabled: false). Routing a bot onto
+    one of these breaks it outright (gateway: "provider 'x' is disabled in config"), so they are
+    never a destination. Unreadable/missing config -> nothing known to be disabled."""
+    cache = {} if cache is None else cache
+    if bot not in cache:
+        try:
+            import yaml
+            c = yaml.safe_load((_bot_home(bot) / "config.yaml").read_text()) or {}
+            cache[bot] = {p for p, v in (c.get("providers") or {}).items()
+                          if isinstance(v, dict) and v.get("enabled") is False}
+        except Exception:
+            cache[bot] = set()
+    return cache[bot]
+
+
+def decide(policy, q, state, skip=(), off=None):
+    """off(bot) -> set of providers disabled for that bot (injectable for tests)."""
     t, kinds, changes = _t(policy), policy["kinds"], []
+    _cache = {}
+    off = off or (lambda b: disabled_providers(b, _cache))
     for scope, cls in policy["scopes"].items():
         bot = scope.split(".")[0]
         if bot in policy.get("never_touch", []) or scope in skip:
             continue
         ladder = policy["classes"][cls]
+        dis = off(bot)
         cur = min(int(state.get(scope, 0)), len(ladder) - 1)
         prov = ladder[cur][0]
-        st = status(prov, q, kinds[prov], t)
+        st = "down" if prov in dis else status(prov, q, kinds[prov], t)
         new, why = cur, None
         # 1) climb back: highest rung above current that has cooled and has room
         for j in range(cur):
             pj = ladder[j][0]
-            if cooled(pj, q, kinds[pj], t) and status(pj, q, kinds[pj], t) == "room":
+            if pj not in dis and cooled(pj, q, kinds[pj], t) and status(pj, q, kinds[pj], t) == "room":
                 new, why = j, f"{pj} recovered"
                 break
         # 2) shed: current is hot/down -> first rung (top-down) on another provider that has room
         if new == cur and st in ("hot", "down"):
             for j, (pj, _) in enumerate(ladder):
-                if pj != prov and status(pj, q, kinds[pj], t) == "room":
+                if pj != prov and pj not in dis and status(pj, q, kinds[pj], t) == "room":
                     new, why = j, f"{prov} {st}"
                     break
+        # 3) stranded on a provider the bot has disabled and nothing better: back to rung 0 and let the
+        #    bot's own reactive fallback chain handle a 429 — a disabled provider never resolves at all.
+        if new == cur and prov in dis and cur != 0:
+            new, why = 0, f"{prov} disabled in {bot} config"
         if new != cur:
             to = ladder[new]
             changes.append({"scope": scope, "bot": bot, "class": cls, "from": ladder[cur], "to": to, "rung": new,
