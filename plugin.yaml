@@ -1,0 +1,5 @@
+name: quota-router
+version: 0.2.0
+description: "Routes Hermes bots between AI subscriptions and credits by remaining quota: /quota command, dashboard tab, desktop page. The half-hourly cron job runs engine/quota_router.py."
+author: "T0ken2me"
+kind: standalone

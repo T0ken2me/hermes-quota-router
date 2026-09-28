@@ -1,0 +1,64 @@
+# Quota Router policy — copy to <hermes root>/workspace/quota-router/policy.yaml and adapt.
+# Everything below is an EXAMPLE: profile names, cron job ids and model ids are placeholders.
+# Model ids change often; use the ones your providers list (`hermes model`).
+
+mode: dry_run              # dry_run = log what it WOULD do; enforce = apply. Start in dry_run.
+
+thresholds:
+  hot_weekly: 70           # a subscription is "hot" at/above this weekly %
+  hot_session: 85          # ... or at/above this session-window %
+  room_weekly: 50          # a subscription may RECEIVE routes only below this weekly %
+  room_session: 85
+  return_weekly: 55        # hysteresis: climb back up the ladder only below these
+  return_session: 70
+  min_balance_usd: 2.0     # metered API needs at least this much credit to be eligible
+
+# Pay-per-use APIs (kind: metered) are never used unless you set this to true.
+allow_metered: false
+
+# Profiles the router must never read or write (e.g. a local-only / private bot).
+never_touch: [private]
+
+# Who may use /quota over messaging. Local CLI/TUI/desktop always work. Format "platform:user_id".
+# Empty = nobody over chat. Changes are accepted only in a private chat with the bot.
+control:
+  admins: []               # e.g. ["telegram:123456789"]
+
+# Optional probes. The GitHub Copilot status probe uses an undocumented GitHub endpoint and your
+# `gh` login; leave it off to simply assume the plan is active.
+probes:
+  copilot: false
+
+# Provider kinds decide how eligibility is measured:
+#   subscription: weekly/session % below room_*   credits: balance > 0
+#   flat: plan active                              metered: balance >= min_balance_usd (+ allow_metered)
+kinds:
+  anthropic: subscription
+  openai-codex: subscription
+  nous: credits
+  copilot: flat
+  deepseek: metered
+  openrouter: metered
+
+# Ladders by task class: tried top to bottom; the router uses the highest eligible rung.
+# Order convention: subscriptions -> Nous -> flat-fee -> metered.
+classes:
+  reasoning:  [[anthropic, claude-opus-4-1], [openai-codex, gpt-5], [nous, anthropic/claude-opus-4.1], [copilot, claude-sonnet-4]]
+  coding:     [[openai-codex, gpt-5-codex], [anthropic, claude-sonnet-4-5], [nous, openai/gpt-5], [copilot, gpt-5-mini], [deepseek, deepseek-chat]]
+  worker:     [[anthropic, claude-sonnet-4-5], [openai-codex, gpt-5-mini], [nous, openai/gpt-5-mini], [copilot, gpt-5-mini], [deepseek, deepseek-chat]]
+  # Sensitive work: keep it off pay-per-use third parties entirely.
+  sensitive:  [[anthropic, claude-sonnet-4-5], [openai-codex, gpt-5], [nous, anthropic/claude-sonnet-4.5]]
+  # Needs image input: only vision-capable models.
+  vision:     [[openai-codex, gpt-5], [anthropic, claude-sonnet-4-5], [nous, openai/gpt-5]]
+
+# Routes: <profile>.main | <profile>.delegation | <profile>.aux.<task> | <profile>.cron.<job_id>
+# "default" is the main Hermes profile. Cron job ids come from `hermes -p <profile> cron list`.
+scopes:
+  default.main: reasoning
+  default.delegation: worker
+  coder.main: coding
+  coder.delegation: worker
+  coder.aux.compression: worker
+  writer.main: sensitive
+  designer.main: vision
+  # coder.cron.0123456789ab: worker

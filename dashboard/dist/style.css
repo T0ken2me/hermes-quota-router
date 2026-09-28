@@ -1,0 +1,27 @@
+.qr-root { display: flex; flex-direction: column; gap: 1rem; }
+.qr-top { display: flex; justify-content: space-between; align-items: flex-end; gap: 1rem; flex-wrap: wrap; }
+.qr-top-actions { display: flex; gap: .5rem; align-items: center; }
+.qr-title { font-size: 1.25rem; font-weight: 600; margin: 0; }
+.qr-sub { font-size: .75rem; color: var(--color-muted-foreground); }
+.qr-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .78rem; }
+.qr-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: .75rem; }
+.qr-gauge { border: 1px solid var(--color-border); border-radius: var(--radius); padding: .6rem .75rem; }
+.qr-gauge-head { display: flex; justify-content: space-between; font-size: .85rem; margin-bottom: .35rem; }
+.qr-bar { height: 6px; background: var(--color-muted); border-radius: 3px; overflow: hidden; }
+.qr-fill { height: 100%; }
+.qr-fill.qr-ok { background: #16a34a; } .qr-fill.qr-warm { background: #d97706; } .qr-fill.qr-hot { background: #dc2626; }
+b.qr-ok { color: #16a34a; } b.qr-warm { color: #d97706; } b.qr-hot { color: #dc2626; } .qr-muted { color: var(--color-muted-foreground); }
+.qr-scroll { overflow-x: auto; }
+.qr-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+.qr-table th { text-align: left; font-weight: 500; color: var(--color-muted-foreground); padding: .35rem .5rem; border-bottom: 1px solid var(--color-border); }
+.qr-table td { padding: .35rem .5rem; border-bottom: 1px solid var(--color-border); vertical-align: middle; }
+.qr-row-drift { background: color-mix(in srgb, #d97706 8%, transparent); }
+.qr-actions { display: flex; gap: .35rem; align-items: center; }
+.qr-select { background: var(--color-card); color: var(--color-card-foreground); border: 1px solid var(--color-border); border-radius: var(--radius); font-size: .75rem; padding: .2rem .3rem; max-width: 230px; }
+.qr-badge { margin-left: .4rem; }
+.qr-held { background: #2563eb; color: #fff; } .qr-drift { background: #d97706; color: #fff; }
+.qr-enforce { background: #dc2626; color: #fff; } .qr-dry { background: #6b7280; color: #fff; }
+.qr-msg { white-space: pre-wrap; font-size: .78rem; border: 1px solid var(--color-border); border-radius: var(--radius); padding: .6rem; background: var(--color-card); }
+.qr-thr { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: .6rem; margin-bottom: .75rem; }
+.qr-thr-item { display: flex; flex-direction: column; gap: .2rem; font-size: .75rem; }
+.qr-filter { max-width: 240px; }
