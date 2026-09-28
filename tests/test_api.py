@@ -47,4 +47,34 @@ r1 = c.post(B + "/run", json={}, headers=J).status_code
 r2 = c.post(B + "/run", json={}, headers=J).status_code
 R.check(r1 == 200 and r2 == 429, "run-now throttled")
 cleanup(tmp)
+
+# _wrapper always emits ["hermes", "-p", bot], even for "default"
+# (old code returned bare ["hermes"] for default, so runners from inside a profile shell
+#  would silently edit that shell's profile instead of the intended one)
+import importlib.util as _ilu
+_spec = _ilu.spec_from_file_location("qr_eng_w", HERE / "engine" / "quota_router.py")
+_w = _ilu.module_from_spec(_spec); _spec.loader.exec_module(_w)
+R.check(_w._wrapper("default") == ["hermes", "-p", "default"],
+        "_wrapper('default') is ['hermes', '-p', 'default']")
+R.check(_w._wrapper("writer") == ["hermes", "-p", "writer"],
+        "_wrapper('writer') is ['hermes', '-p', 'writer']")
+
+# behaviour: apply() for a default.* scope targets the default profile explicitly
+m2, tmp2 = load_engine()
+_calls = []
+
+
+class _FakeSubprocess:
+    @staticmethod
+    def run(argv, **kw):
+        _calls.append(list(argv))
+        return type("R", (), {"returncode": 0})()
+
+
+_w.subprocess = _FakeSubprocess()
+_w.HOME = m2.WS / "fake-hermes"
+_w.apply({"scope": "default.main", "to": ["anthropic", "claude-sonnet-4-5"], "from": ["openai-codex", "gpt-5"]})
+R.check(bool(_calls) and all(a[:3] == ["hermes", "-p", "default"] for a in _calls),
+        "apply() for default.* runs `hermes -p default ...`")
+cleanup(tmp2)
 R.done()

@@ -320,8 +320,9 @@ def _bot_home(bot):
 
 
 def _wrapper(bot):
-    """CLI argv prefix that targets a profile (`hermes -p <bot>` works without per-bot wrappers)."""
-    return ["hermes"] if bot == "default" else ["hermes", "-p", bot]
+    """CLI argv prefix that targets a profile. Always explicit, even for default: a bare `hermes`
+    follows the caller's HERMES_HOME, so a run from inside a profile shell would edit that profile."""
+    return ["hermes", "-p", bot]
 
 
 def _keys(scope):
