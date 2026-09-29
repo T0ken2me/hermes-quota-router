@@ -79,6 +79,29 @@ Routes are named `<bot>.main`, `<bot>.delegation`, `<bot>.aux.<task>`, `<bot>.cr
 If you change a bot's model by hand, the router notices, tells you once and leaves that route
 alone until you `release` it or update the policy.
 
+## Spend panel
+
+The **Spend** section of the dashboard tab shows read-only token and estimated cost data
+drawn from Hermes's own `state.db` (the `session_model_usage` table). No re-pricing, no
+network calls.
+
+- **Range picker**: today / 7d / 30d.
+- **Totals card**: estimated cost, input/output/total tokens, provenance note
+  ("estimated; by last activity" — ranges attribute rows by `last_seen`, not exact call time).
+- **Daily bar chart**: cost per calendar day (machine timezone).
+- **Per-profile table**: cost and tokens broken down by Hermes profile.
+- **Per-model table**: top models by estimated cost, token counts, session count.
+- **Top sessions**: profile, shortened session ID, model(s), date, tokens, cost —
+  **never session titles** (titles can contain client or matter names).
+
+Profiles listed in `never_touch` in your policy are completely skipped — their `state.db`
+is never opened. Rows where cost provenance is unknown are counted for tokens but their cost
+is omitted from the total and flagged in the coverage card.
+
+Attribution notice: `engine/spend.py` is adapted from
+[Diabloluo/hermes-hud](https://github.com/Diabloluo/hermes-hud) `dashboard/hud/cost.py`
+at `004c18a7`, MIT. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
 ## Dashboard login and remote access (optional)
 
 Locally the dashboard needs no login: run `hermes dashboard` and open the **Quota Router** tab.
@@ -123,6 +146,10 @@ bash tests/run_all.sh
 - `test_security` — policy validation (path traversal, odd model ids), `never_touch`,
   holds/force, `/quota` access control.
 - `test_api` — dashboard API: cross-site and form requests refused, rate limits, no error leaks.
+- `test_alert` — alert formatter: grouping, icons, budget line, reset times.
+- `test_spend` — spend engine: per-profile/model/day aggregations, `never_touch` DB never
+  opened, read-only (mtime unchanged), no `title` key anywhere in sessions, day boundaries,
+  pricing-unknown rows omitted from totals, limit enforcement.
 
 They use a temporary copy of the example policy with the Hermes CLI fenced off, so they cannot
 read or change a real install.
