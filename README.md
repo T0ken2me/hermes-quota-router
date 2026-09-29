@@ -51,7 +51,9 @@ Then:
    `never_touch`. Optional switches, all **off** by default:
    - `allow_metered: true` — allow pay-per-use API rungs;
    - `control.admins: ["telegram:<your user id>"]` — allow `/quota` from chat;
-   - `probes.copilot: true` — read the Copilot plan status (see *Safety notes*).
+   - `probes.copilot: true` — read the Copilot plan status (see *Safety notes*);
+   - `blocked_providers: [...]` — providers/vendors that must never be routed to (policy
+     is refused if a ladder contains one; also matches `vendor/model` ids on aggregators).
 2. Watch a few dry-run cycles: `/quota` shows what it *would* switch.
 3. Turn it on: `/quota mode enforce`.
 4. Desktop app: **Capabilities → Plugins → Rescan**, then enable **Quota Router**.

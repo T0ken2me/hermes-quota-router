@@ -66,6 +66,19 @@ def validate_policy(p):
     for prov, kind in p["kinds"].items():
         if kind not in KINDS or not re.fullmatch(_NAME, str(prov)):
             raise ValueError(f"policy.yaml: bad kind entry {prov}: {kind}")
+    # Optional deny-list: providers (or aggregator vendor prefixes such as "vendor/model")
+    # that must never appear in any ladder. Empty by default. Local models without a
+    # vendor prefix are not matched, so a local model can share a name with a blocked vendor.
+    blocked = p.get("blocked_providers") or []
+    if not isinstance(blocked, list) or not all(re.fullmatch(_NAME, str(b)) for b in blocked):
+        raise ValueError("policy.yaml: blocked_providers must be a list of provider/vendor names")
+    blocked = {str(b).lower() for b in blocked}
+    for cls, ladder in p["classes"].items():
+        for rung in ladder if isinstance(ladder, list) else []:
+            if isinstance(rung, list) and len(rung) == 2 and (
+                    str(rung[0]).lower() in blocked
+                    or ("/" in str(rung[1]) and str(rung[1]).split("/")[0].lower() in blocked)):
+                raise ValueError(f"policy.yaml: class {cls}: rung {rung} uses a blocked provider/vendor")
     for cls, ladder in p["classes"].items():
         if not isinstance(ladder, list) or not ladder:
             raise ValueError(f"policy.yaml: class {cls} has no ladder")

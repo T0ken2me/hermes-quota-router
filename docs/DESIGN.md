@@ -68,6 +68,8 @@ drift), `overrides.json` (holds), `quota.jsonl` (readings), `decisions.jsonl` (a
 - **What it sends where.** Each provider key goes only to that provider's usage endpoint. Nothing
   else leaves the machine. No telemetry.
 - **Pay-per-use.** Off unless `allow_metered: true`; every switch to a metered rung is flagged 💳.
+- **Blocked providers.** Optional `blocked_providers` list; a policy whose ladders contain a
+  blocked provider, or an aggregator model id with a blocked vendor prefix, is rejected at load.
 
 ## Not done / open
 - Per-query routing by a small classifier model.

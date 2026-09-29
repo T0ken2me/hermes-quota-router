@@ -19,6 +19,11 @@ allow_metered: false
 # Profiles the router must never read or write (e.g. a local-only / private bot).
 never_touch: [private]
 
+# Optional: providers or aggregator vendors (the part before "/" in "vendor/model") that must
+# never be used, e.g. for data-residency or organisational policy. The policy is refused
+# if any ladder contains one. Local models without a vendor prefix are not affected.
+blocked_providers: []      # e.g. [some-provider, some-vendor]
+
 # Who may use /quota over messaging. Local CLI/TUI/desktop always work. Format "platform:user_id".
 # Empty = nobody over chat. Changes are accepted only in a private chat with the bot.
 control:
