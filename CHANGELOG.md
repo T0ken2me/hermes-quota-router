@@ -31,6 +31,11 @@
   `decisions.jsonl` and the `/quota` command output.
 - `run_all.sh` includes `test_alert` in the suite.
 
+## 0.2.2
+- Readable Telegram alerts: one line per event (grouped counts, provider names, reset times), failures always listed individually; full detail stays in the decision log and /quota.
+- Read-only Spend panel in the dashboard tab: tokens and estimated cost per model, profile and day (adapted from hermes-hud, MIT); never_touch profiles are never read; no session titles or content.
+- Optional `blocked_providers` deny-list (empty by default): a policy whose ladders use a blocked provider or aggregator vendor is refused.
+
 ## 0.2.1 — 2026-09-28
 
 ### Fixed
