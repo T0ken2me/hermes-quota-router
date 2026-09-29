@@ -141,13 +141,25 @@ def _window(snap, *needles):
     return None
 
 
+def _window_reset(snap, *needles):
+    """Return the ISO reset_at string for the first matching window, or None."""
+    for w in (snap or {}).get("windows", []):
+        if any(n in (w.get("label") or "").lower() for n in needles):
+            r = w.get("reset_at")
+            return r.isoformat() if hasattr(r, "isoformat") else r  # asdict keeps datetimes; the quota log is JSON
+    return None
+
+
 def _subscription(p):
     from agent.account_usage import fetch_account_usage
     s = fetch_account_usage(p)
     d = dataclasses.asdict(s) if s else None
     if not d or d.get("unavailable_reason"):
         return {"ok": False, "unknown": True, "error": (d or {}).get("unavailable_reason") or "no snapshot"}
-    return {"ok": True, "weekly": _window(d, "week"), "session": _window(d, "session")}
+    return {"ok": True,
+            "weekly": _window(d, "week"), "session": _window(d, "session"),
+            "weekly_reset": _window_reset(d, "week"),
+            "session_reset": _window_reset(d, "session")}
 
 
 def _nous():
@@ -419,6 +431,314 @@ def _brief(q):
     return " · ".join(b)
 
 
+# ---------------------------------------------------------------------------
+# Readable Telegram alert formatter (pure, unit-testable)
+# ---------------------------------------------------------------------------
+
+_PROV_NAMES = {
+    "anthropic": "Claude",
+    "openai-codex": "ChatGPT",
+    "nous": "Nous",
+    "copilot": "Copilot",
+    "deepseek": "DeepSeek",
+    "openrouter": "OpenRouter",
+}
+
+# Reason token -> human phrase (used to decode reason strings like "anthropic down")
+_REASON_WORDS = {
+    "down": "unavailable",
+    "hot": "near its limit",
+    "recovered": "back",
+}
+
+
+def _scope_kind(scope):
+    """Return 'bot' (main/delegation), 'bg' (aux), or 'cron'."""
+    parts = scope.split(".")
+    if len(parts) < 2:
+        return "bot"
+    k = parts[1]
+    if k in ("main", "delegation"):
+        return "bot"
+    if k == "aux":
+        return "bg"
+    if k == "cron":
+        return "cron"
+    return "bot"
+
+
+def _format_budget_line(q):
+    """Build the Budget: line from a quota snapshot dict."""
+    parts = []
+
+    # Subscription providers: show 5h session % and weekly %, with reset times
+    for prov, label in (("anthropic", "Claude"), ("openai-codex", "ChatGPT")):
+        r = q.get(prov)
+        if not r or not r.get("ok"):
+            continue
+        s_pct = r.get("session")
+        w_pct = r.get("weekly")
+        s_reset = r.get("session_reset")
+        w_reset = r.get("weekly_reset")
+
+        def _pct_str(pct, reset_iso, label_short):
+            if pct is None:
+                return None
+            warn = ""
+            if pct >= 70:
+                warn = " ⚠️"
+            s = f"{label_short} {round(pct)}%{warn}"
+            if pct >= 100 and reset_iso:
+                try:
+                    reset_dt = dt.datetime.fromisoformat(reset_iso)
+                    local_reset = reset_dt.astimezone(dt.timezone.utc).astimezone()
+                    s += f" resets {local_reset.strftime('%H:%M')}"
+                except Exception:
+                    pass
+            return s
+
+        s = _pct_str(s_pct, s_reset, "5h")
+        w = _pct_str(w_pct, w_reset, "wk")
+        inner = " · ".join(x for x in (s, w) if x)
+        if inner:
+            parts.append(f"{label} {inner}")
+
+    # Nous credits
+    r = q.get("nous")
+    if r and r.get("ok") and r.get("credits") is not None:
+        parts.append(f"Nous {round(r['credits'])} cr")
+
+    # OpenRouter / DeepSeek: show only if ok and balance known
+    for prov, label in (("openrouter", "OpenRouter"), ("deepseek", "DeepSeek")):
+        r = q.get(prov)
+        if r and r.get("ok") and r.get("balance_usd") is not None:
+            parts.append(f"{label} ${r['balance_usd']:.2f}")
+
+    # Copilot: only if probed (ok explicitly True and not just assumed)
+    r = q.get("copilot")
+    if r and r.get("ok") and not r.get("assumed"):
+        parts.append("Copilot ok")
+
+    return "Budget: " + " · ".join(parts) if parts else ""
+
+
+def _bots_phrase(grp):
+    """'7 bots (main + subagents)' — counts distinct bots, says which of their routes moved."""
+    bot = [c["scope"].split(".") for c in grp if _scope_kind(c["scope"]) == "bot"]
+    n = len({b[0] for b in bot})
+    kinds = {b[1] for b in bot}
+    what = "main + subagents" if kinds == {"main", "delegation"} else ("main" if kinds == {"main"} else "subagents")
+    return f"{n} bot{'s' if n != 1 else ''} ({what})"
+
+
+def format_alert(changes, drift_items, q, dry, now, away_minutes=None):
+    """Build the Telegram notification string (pure, no side effects).
+
+    changes     — list of change dicts from decide()
+    drift_items — dict from drift() (scope -> description)
+    q           — quota readings dict from collect()
+    dry         — bool, True when not enforcing
+    now         — datetime (aware) representing this run's timestamp
+    away_minutes — int or None; for return events, how long routes were away
+
+    Returns a multi-line string (possibly empty when nothing to report).
+    """
+    if not changes and not drift_items:
+        return ""
+
+    time_str = now.strftime("%H:%M")
+    has_failed = any(c.get("apply_error") for c in changes)
+    has_drift = bool(drift_items)
+    has_failed_flag = has_failed or has_drift
+
+    # Determine overall icon
+    if has_failed_flag:
+        icon = "🛑"
+    elif dry:
+        icon = "🧪"
+    else:
+        # ⚠️ if any routes moved away (reason contains "down" or "hot")
+        # ✅ if ALL non-failed changes are returns (reason contains "recovered")
+        all_reasons = [c.get("reason", "") for c in changes if not c.get("apply_error")]
+        has_moves_away = any("down" in r or "hot" in r or "disabled" in r for r in all_reasons)
+        has_returns = any("recovered" in r for r in all_reasons)
+        if has_moves_away:
+            icon = "⚠️"
+        elif has_returns and not has_moves_away:
+            icon = "✅"
+        else:
+            icon = "⚠️"
+
+    dry_prefix = "(dry-run) " if dry else ""
+    headline = f"{icon} {dry_prefix}Quota router · {time_str}"
+    lines = [headline]
+
+    # --- Group non-drift changes by (from_provider, trigger, dest_provider) ---
+    def _parse_reason(reason):
+        """Return (from_provider, trigger) from a reason string."""
+        parts = (reason or "").strip().split()
+        if len(parts) >= 2:
+            return parts[0], parts[-1]
+        return ("?", "?")
+
+    from collections import defaultdict
+    groups = defaultdict(list)
+    failed_changes = []
+
+    for c in changes:
+        if c.get("apply_error"):
+            failed_changes.append(c)
+            continue
+        from_prov, trigger = _parse_reason(c.get("reason", ""))
+        dest_prov = c["to"][0]
+        groups[(from_prov, trigger, dest_prov)].append(c)
+
+    # Build one summary line per group
+    for (from_prov, trigger, dest_prov), grp in groups.items():
+        from_name = _PROV_NAMES.get(from_prov, from_prov)
+        dest_name = _PROV_NAMES.get(dest_prov, dest_prov)
+        n = len(grp)
+
+        # Count by scope kind
+        n_bot = sum(1 for c in grp if _scope_kind(c["scope"]) == "bot")
+        n_bg = sum(1 for c in grp if _scope_kind(c["scope"]) == "bg")
+        n_cron = sum(1 for c in grp if _scope_kind(c["scope"]) == "cron")
+
+        if trigger == "recovered":
+            verb = f"{from_name} back →"
+            suffix = f" (away {away_minutes} min)" if away_minutes is not None else ""
+            if n <= 3:
+                names = []
+                for c in grp:
+                    sc = c["scope"]
+                    bot = sc.split(".")[0]
+                    kind_part = sc.split(".")[1]
+                    if kind_part == "main":
+                        names.append(f"{bot} (main)")
+                    elif kind_part == "delegation":
+                        names.append(f"{bot} (subagent)")
+                    elif kind_part == "aux":
+                        names.append(f"{bot} ({sc.split('.')[2]})")
+                    else:
+                        names.append(f"{bot} (cron {sc.split('.')[2][:6]}…)")
+                lines.append(f"{verb} {', '.join(names)} returned{suffix}")
+            else:
+                count_parts = []
+                if n_bot:
+                    count_parts.append(_bots_phrase(grp))
+                if n_bg:
+                    count_parts.append(f"{n_bg} background task{'s' if n_bg > 1 else ''}")
+                if n_cron:
+                    count_parts.append(f"{n_cron} scheduled job{'s' if n_cron > 1 else ''}")
+                lines.append(f"{verb} {n} routes returned{suffix}")
+                lines.append(f"  • {' · '.join(count_parts)}")
+        else:
+            # Moving away: resolve capped vs unavailable
+            if trigger == "down":
+                trigger_word = "capped" if (q.get(from_prov, {}).get("session") or 0) >= 100 \
+                    or (q.get(from_prov, {}).get("weekly") or 0) >= 100 else "unavailable"
+            else:
+                trigger_word = _REASON_WORDS.get(trigger, trigger)
+            verb = f"{from_name} {trigger_word} →"
+            if n <= 3:
+                names = []
+                for c in grp:
+                    sc = c["scope"]
+                    bot = sc.split(".")[0]
+                    kind_part = sc.split(".")[1]
+                    if kind_part == "main":
+                        names.append(f"{bot} (main) → {dest_name}")
+                    elif kind_part == "delegation":
+                        names.append(f"{bot} (subagent) → {dest_name}")
+                    elif kind_part == "aux":
+                        names.append(f"{bot} ({sc.split('.')[2]}) → {dest_name}")
+                    else:
+                        names.append(f"{bot} (cron {sc.split('.')[2][:6]}…) → {dest_name}")
+                lines.append(f"{verb} {', '.join(names)}")
+            else:
+                reset_note = ""
+                r = q.get(from_prov, {})
+                s_pct = r.get("session") or 0
+                w_pct = r.get("weekly") or 0
+                s_reset = r.get("session_reset")
+                w_reset = r.get("weekly_reset")
+                if s_pct >= 100 and s_reset:
+                    try:
+                        rdt = dt.datetime.fromisoformat(s_reset).astimezone()
+                        reset_note = f" (5h window 100%, resets {rdt.strftime('%H:%M')})"
+                    except Exception:
+                        pass
+                elif w_pct >= 100 and w_reset:
+                    try:
+                        rdt = dt.datetime.fromisoformat(w_reset).astimezone()
+                        reset_note = f" (wk 100%, resets {rdt.strftime('%H:%M')})"
+                    except Exception:
+                        pass
+                elif trigger == "hot":
+                    pct_shown = max(s_pct or 0, w_pct or 0)
+                    if pct_shown:
+                        reset_note = f" ({round(pct_shown)}% used)"
+
+                count_parts = []
+                if n_bot:
+                    count_parts.append(_bots_phrase(grp))
+                if n_bg:
+                    count_parts.append(f"{n_bg} background task{'s' if n_bg > 1 else ''}")
+                if n_cron:
+                    count_parts.append(f"{n_cron} scheduled job{'s' if n_cron > 1 else ''}")
+                lines.append(f"{verb} {n} routes moved to {dest_name}{reset_note}")
+                lines.append(f"  • {' · '.join(count_parts)}")
+
+    # Drift / failed apply items — always listed individually with action hint
+    for c in failed_changes:
+        lines.append(f"🛑 {c['scope']}: apply FAILED — {c.get('apply_error', '?')[:80]} — check logs & restore manually")
+
+    for scope, desc in (drift_items or {}).items():
+        lines.append(f"🛑 {scope}: drift ({desc}) — update policy.yaml or restore the setting")
+
+    # Budget line
+    budget = _format_budget_line(q)
+    if budget:
+        lines.append(budget)
+
+    return "\n".join(lines)
+
+
+def _away_minutes(changed_scopes, log_path=None):
+    """Scan decisions.jsonl and return the number of whole minutes since the first scope in
+    changed_scopes last departed from rung 0 (i.e. moved away from first choice).
+    Returns None when the log is absent or the departure can't be found."""
+    path = log_path or DECISION_LOG
+    try:
+        text = Path(path).read_text()
+    except FileNotFoundError:
+        return None
+    scope_set = set(changed_scopes)
+    last_away = None
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if rec.get("scope") in scope_set and int(rec.get("rung", 0)) != 0:
+            ts_str = rec.get("ts")
+            if ts_str:
+                try:
+                    last_away = dt.datetime.fromisoformat(ts_str)
+                except Exception:
+                    pass
+    if last_away is None:
+        return None
+    now_utc = dt.datetime.now(dt.timezone.utc)
+    if last_away.tzinfo is None:
+        last_away = last_away.replace(tzinfo=dt.timezone.utc)
+    delta = now_utc - last_away
+    return max(0, round(delta.total_seconds() / 60))
+
+
 def run(source="cron"):
     """One router pass. Returns the notification lines (empty = nothing to report)."""
     WS.mkdir(parents=True, exist_ok=True)
@@ -426,7 +746,8 @@ def run(source="cron"):
         q = collect(load_policy())  # network probes happen outside the lock
     except ValueError as e:
         return [f"⚠️ Quota router: {e} — nothing changed."]
-    ts = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
+    now = dt.datetime.now(dt.timezone.utc).astimezone()  # aware, local tz
+    ts = now.isoformat(timespec="seconds")
     with _Lock():
         policy = load_policy()
         if not NOLOG:
@@ -441,7 +762,6 @@ def run(source="cron"):
         # QR_DRYRUN=1 forces dry-run whatever policy.yaml says: every test harness sets it, so a
         # scenario run can never rewrite live profile configs or cron jobs.
         dry = policy.get("mode", "dry_run") != "enforce" or bool(os.environ.get("QR_DRYRUN"))
-        lines = []
         for c in changes:
             applied = False
             if not dry:
@@ -452,16 +772,14 @@ def run(source="cron"):
             if dry or applied:
                 state[c["scope"]] = c["rung"]
             log_decision({"ts": ts, "mode": "dry_run" if dry else "enforce", "applied": applied, "source": source, **c})
-            tag = "WOULD switch" if dry else ("switched" if applied else "FAILED")
-            warn = " 💳 METERED" if c["metered"] else ""
-            lines.append(f"• {c['scope']}: {tag} {c['from'][1]} → {c['to'][0]}/{c['to'][1]}{warn} — {c['reason']}")
-        for k in (k for k, v in dr.items() if prev_drift.get(k) != v):
-            lines.append(f"• ⚠️ {k}: {dr[k]} — held; update policy.yaml or restore the setting")
+        # Drift: only report new/changed items (same as before)
+        new_drift = {k: v for k, v in dr.items() if prev_drift.get(k) != v}
         save_state({**state, "_drift": dr})
-    if lines:
-        head = ("🧪 Quota router (dry-run)" if dry else "🔀 Quota router") + f" — {len(lines)} item(s)"
-        return [head, *lines, _brief(q)]
-    return []
+    # Compute away_minutes for return runs (all changes moving back to rung 0)
+    returning_scopes = [c["scope"] for c in changes if c.get("rung", 1) == 0 and not c.get("apply_error")]
+    away_min = _away_minutes(returning_scopes) if returning_scopes else None
+    msg = format_alert(changes, new_drift, q, dry, now, away_minutes=away_min)
+    return [msg] if msg else []
 
 
 def force(scope, rung, note="", who="manual"):
