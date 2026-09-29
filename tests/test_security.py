@@ -102,4 +102,24 @@ as_caller("discord", "111", "dm");        R.check(acc.check_access(POL, False)[0
 as_caller("api_server", "", "");          R.check(acc.check_access(POL, False)[0] is not None, "API server without identity: denied")
 as_caller("", "", "", in_gateway=True);   R.check(acc.check_access(POL, False)[0] is not None, "unidentified caller in gateway: denied")
 as_caller("telegram", "111", "dm");       R.check(acc.check_access({}, False)[0] is not None, "no admins configured: nobody over chat")
+
+# ---- blocked_providers: optional deny-list, empty by default ----
+import copy as _copy
+_eng, _etmp = load_engine()
+_base = _eng.load_policy()
+R.check(not _base.get("blocked_providers"), "example policy blocks nothing by default")
+def _refused(rung, blocked=("vendorx",)):
+    p = _copy.deepcopy(_base); p["blocked_providers"] = list(blocked)
+    p["kinds"].setdefault("vendorx", "metered"); p["kinds"].setdefault("openrouter", "metered"); p["kinds"].setdefault("custom", "flat")
+    p["classes"]["coding"] = p["classes"]["coding"][:1] + [rung]
+    try:
+        _eng.validate_policy(p); return False
+    except ValueError:
+        return True
+R.check(_refused(["vendorx", "some-model"]), "blocked provider rung refused")
+R.check(_refused(["openrouter", "vendorx/some-model"]), "blocked vendor via aggregator refused")
+R.check(not _refused(["openrouter", "othervendor/some-model"]), "other vendor via aggregator allowed")
+R.check(not _refused(["custom", "vendorx-local:9b"]), "local model without vendor prefix allowed")
+R.check(_refused(["openrouter", "x/y"], blocked=("../etc",)), "malformed blocked_providers entry refused")
+cleanup(_etmp)
 R.done()
