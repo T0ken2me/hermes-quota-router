@@ -273,6 +273,23 @@ def run():
             f"coder input_tokens=3500 (got {coder_prof and coder_prof.get('input_tokens')})")
 
     import shutil
+    # ---- fail closed: unreadable policy must refuse, never fall back to "no never_touch" ----
+    pol = home / "workspace" / "quota-router" / "policy.yaml"
+    saved = pol.read_text()
+    for bad in ("never_touch: [unclosed\n", "never_touch: private\n"):
+        pol.write_text(bad)
+        try:
+            m.compute_summary("7d")
+            r.check(False, f"broken policy refused ({bad.strip()!r})")
+        except m.SpendPolicyError:
+            r.check(True, f"broken policy refused ({bad.strip()!r})")
+    pol.unlink()
+    try:
+        m.compute_profiles("7d"); r.check(False, "missing policy refused")
+    except m.SpendPolicyError:
+        r.check(True, "missing policy refused")
+    pol.write_text(saved)
+
     shutil.rmtree(tmp, ignore_errors=True)
     r.done()
 

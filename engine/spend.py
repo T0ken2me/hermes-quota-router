@@ -131,16 +131,27 @@ def _profile_dbs(never_touch: set[str]) -> list[tuple[str, Path]]:
     return results
 
 
+class SpendPolicyError(RuntimeError):
+    """The policy (and so the never_touch list) could not be read — refuse to read any DB."""
+
+
 def _load_never_touch() -> set[str]:
-    """Load the router's never_touch list from policy.yaml.  Returns empty set on failure."""
+    """Load the router's never_touch list from policy.yaml.
+
+    Fails CLOSED: if the policy cannot be read or parsed, raise instead of returning an
+    empty set — otherwise a broken policy file would expose a never_touch profile.
+    """
     try:
         import yaml
         home = _hermes_home()
         policy_path = home / "workspace" / "quota-router" / "policy.yaml"
         p = yaml.safe_load(policy_path.read_text()) or {}
-        return set(p.get("never_touch") or [])
-    except Exception:
-        return set()
+        nt = p.get("never_touch") or []
+        if not isinstance(nt, list):
+            raise ValueError("never_touch must be a list")
+        return {str(x) for x in nt}
+    except Exception as exc:
+        raise SpendPolicyError(f"spend panel disabled: policy unreadable ({type(exc).__name__})") from None
 
 
 def _load_daily_budget() -> Optional[float]:

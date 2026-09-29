@@ -143,29 +143,29 @@ def _spend_range(range_: str) -> str:
 @router.get("/spend/summary")
 async def spend_summary(range: str = "7d"):
     from engine.spend import compute_summary
-    return await asyncio.to_thread(compute_summary, _spend_range(range))
+    return await _call(compute_summary, _spend_range(range))
 
 
 @router.get("/spend/timeseries")
 async def spend_timeseries(range: str = "7d"):
     from engine.spend import compute_timeseries
-    return await asyncio.to_thread(compute_timeseries, _spend_range(range))
+    return await _call(compute_timeseries, _spend_range(range))
 
 
 @router.get("/spend/models")
 async def spend_models(range: str = "7d"):
     from engine.spend import compute_models
-    return await asyncio.to_thread(compute_models, _spend_range(range))
+    return await _call(compute_models, _spend_range(range))
 
 
 @router.get("/spend/profiles")
 async def spend_profiles(range: str = "7d"):
     from engine.spend import compute_profiles
-    return await asyncio.to_thread(compute_profiles, _spend_range(range))
+    return await _call(compute_profiles, _spend_range(range))
 
 
 @router.get("/spend/sessions")
 async def spend_sessions(range: str = "7d", limit: int = 20):
     from engine.spend import compute_top_sessions
     limit = max(1, min(int(limit), 50))
-    return await asyncio.to_thread(compute_top_sessions, _spend_range(range), limit)
+    return await _call(compute_top_sessions, _spend_range(range), limit)
