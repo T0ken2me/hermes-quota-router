@@ -122,4 +122,16 @@ R.check(not _refused(["openrouter", "othervendor/some-model"]), "other vendor vi
 R.check(not _refused(["custom", "vendorx-local:9b"]), "local model without vendor prefix allowed")
 R.check(_refused(["openrouter", "x/y"], blocked=("../etc",)), "malformed blocked_providers entry refused")
 cleanup(_etmp)
+
+# Copilot probe: a plan without a seat is not usable
+import types as _types
+_orig_http, _orig_sub = m._http_json, m.subprocess
+m.subprocess = _types.SimpleNamespace(run=lambda *a, **k: _types.SimpleNamespace(stdout="x"))
+m._http_json = lambda url, h: {"copilot_plan": "individual", "access_type_sku": "no_access"}
+R.check(m._copilot()["ok"] is False, "copilot: plan present but access_type_sku=no_access -> not ok")
+m._http_json = lambda url, h: {"copilot_plan": "individual", "access_type_sku": "copilot_pro"}
+R.check(m._copilot()["ok"] is True, "copilot: paid seat -> ok")
+m._http_json, m.subprocess = _orig_http, _orig_sub
+
+cleanup(tmp)
 R.done()

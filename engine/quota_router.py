@@ -202,7 +202,11 @@ def _copilot():
         return {"ok": False, "error": "no gh token"}
     d = _http_json("https://api.github.com/copilot_internal/user",
                    {"Authorization": f"token {tok}", "Editor-Version": "vscode/1.99"})
-    return {"ok": bool(d.get("copilot_plan")), "plan": d.get("copilot_plan")}
+    # copilot_plan is reported for every account (even with no seat); access_type_sku says whether
+    # the account can actually use Copilot ("no_access" = no seat; "free_limited_copilot" = Free tier).
+    sku = d.get("access_type_sku")
+    return {"ok": bool(d.get("copilot_plan")) and sku not in (None, "no_access"), "plan": d.get("copilot_plan"),
+            "sku": sku}
 
 
 def _deepseek(env):
