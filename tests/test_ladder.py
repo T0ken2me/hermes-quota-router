@@ -86,5 +86,23 @@ wk = [s for s, c in pol["scopes"].items() if len(pol["classes"][c]) > 3 and pol[
 ch = m.decide(pol, readings(anthropic={"weekly": 100}, **{"openai-codex": {"weekly": 100}}, nous={"ok": False},
                             deepseek={"balance_usd": 0}), {wk: 3}, off=lambda b: {"copilot"})
 R.check(any(c["scope"] == wk and c["rung"] == 0 for c in ch), "stranded on disabled provider -> back to rung 0")
+# a provider whose quota reads healthy but which THIS bot cannot log in to (2026-10-12 incident: account-level
+# Anthropic quota fine, one profile's own OAuth login expired -> router kept it on Anthropic -> "No credentials")
+m, tmp2 = load_engine(allow_metered)
+m._edit_policy(lambda d: d.__setitem__("mode", "enforce"))
+m.probe_credential = lambda bot, p: p != "anthropic"
+step(m, readings(**{"openai-codex": {"weekly": 75}}))
+R.check(on(m, S) != "anthropic", "codex hot but bot has no Anthropic login -> skips Anthropic")
+m.probe_credential = lambda bot, p: True
+st = {S: 1}
+m.save_state(st)
+step(m, readings(**{"openai-codex": {"weekly": 75}}))
+R.check(on(m, S) == "anthropic", "control: with a working login the same readings pick Anthropic")
+m.probe_credential = lambda bot, p: p != "anthropic"
+step(m, readings(**{"openai-codex": {"weekly": 75}}))
+R.check(on(m, S) != "anthropic", "sitting on Anthropic when its login dies -> moved off")
+m.probe_credential = lambda bot, p: None
+R.check(m.credential_missing("coder", {"anthropic"}) == set(), "inconclusive probe never blocks a provider")
+cleanup(tmp2)
 cleanup(tmp)
 R.done()

@@ -304,11 +304,66 @@ def disabled_providers(bot, cache=None):
     return cache[bot]
 
 
+# Run inside the target profile (HERMES_HOME) so the answer reflects THAT profile's own logins, not the
+# account the quota readings came from. Prints OK / NOCRED / UNKNOWN on the last line.
+_CRED_PROBE = r"""
+import sys
+try:
+    import hermes_bootstrap  # noqa: F401
+except Exception:
+    pass
+try:
+    from hermes_cli.runtime_provider import resolve_runtime_provider
+except Exception:
+    print("UNKNOWN"); raise SystemExit(0)
+try:
+    r = resolve_runtime_provider(requested=sys.argv[1]) or {}
+    print("OK" if (r.get("api_key") or r.get("credential_pool")) else "NOCRED")
+except Exception as e:
+    print("NOCRED" if type(e).__name__ == "AuthError" else "UNKNOWN")
+"""
+
+
+def probe_credential(bot, provider):
+    """-> True (the bot's own profile resolves a credential for provider), False (it has none: an
+    expired OAuth login, no key), None (could not tell). Quota readings are taken from one account
+    and say nothing about whether a given profile can actually log in to that provider."""
+    if not re.fullmatch(r"[a-z0-9][a-z0-9:._-]{0,63}", provider or ""):
+        return None
+    env = {**os.environ, "HERMES_HOME": str(_bot_home(bot))}
+    if (HOME / "hermes-agent").is_dir():
+        env["PYTHONPATH"] = str(HOME / "hermes-agent") + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    try:
+        r = subprocess.run([sys.executable, "-c", _CRED_PROBE, provider], env=env,
+                           capture_output=True, text=True, timeout=60)
+        last = (r.stdout or "").strip().splitlines()[-1:] or [""]
+    except Exception:
+        return None
+    return {"OK": True, "NOCRED": False}.get(last[0].strip())
+
+
+def credential_missing(bot, providers, cache=None):
+    """Providers among *providers* the bot has no usable credential for. Only a definite "no
+    credential" counts; an inconclusive probe never blocks routing. QR_SKIP_CRED_PROBE=1 disables."""
+    if os.environ.get("QR_SKIP_CRED_PROBE"):
+        return set()
+    cache = {} if cache is None else cache
+    todo = [p for p in sorted(set(providers)) if (bot, p) not in cache]
+    if todo:
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            for p, ok in zip(todo, ex.map(lambda p: probe_credential(bot, p), todo)):
+                cache[(bot, p)] = ok
+    return {p for p in providers if cache.get((bot, p)) is False}
+
+
 def decide(policy, q, state, skip=(), off=None):
-    """off(bot) -> set of providers disabled for that bot (injectable for tests)."""
+    """off(bot) -> set of providers this bot cannot use: switched off in its config, or no usable
+    credential in its own profile (injectable for tests)."""
     t, kinds, changes = _t(policy), policy["kinds"], []
-    _cache = {}
-    off = off or (lambda b: disabled_providers(b, _cache))
+    _cache, _ccache, _provs = {}, {}, {}
+    for _s, _c in policy["scopes"].items():
+        _provs.setdefault(_s.split(".")[0], set()).update(p for p, _ in policy["classes"][_c])
+    off = off or (lambda b: disabled_providers(b, _cache) | credential_missing(b, _provs.get(b, ()), _ccache))
     for scope, cls in policy["scopes"].items():
         bot = scope.split(".")[0]
         if bot in policy.get("never_touch", []) or scope in skip:
@@ -317,7 +372,7 @@ def decide(policy, q, state, skip=(), off=None):
         dis = off(bot)
         cur = min(int(state.get(scope, 0)), len(ladder) - 1)
         prov = ladder[cur][0]
-        st = "down" if prov in dis else status(prov, q, kinds[prov], t)
+        st = "unusable" if prov in dis else status(prov, q, kinds[prov], t)
         new, why = cur, None
         # 1) climb back: highest rung above current that has cooled and has room
         for j in range(cur):
@@ -326,7 +381,7 @@ def decide(policy, q, state, skip=(), off=None):
                 new, why = j, f"{pj} recovered"
                 break
         # 2) shed: current is hot/down -> first rung (top-down) on another provider that has room
-        if new == cur and st in ("hot", "down"):
+        if new == cur and st in ("hot", "down", "unusable"):
             for j, (pj, _) in enumerate(ladder):
                 if pj != prov and pj not in dis and status(pj, q, kinds[pj], t) == "room":
                     new, why = j, f"{prov} {st}"
@@ -466,6 +521,7 @@ _REASON_WORDS = {
     "down": "unavailable",
     "hot": "near its limit",
     "recovered": "back",
+    "unusable": "not usable by this bot (switched off or no working login)",
 }
 
 
@@ -577,7 +633,7 @@ def format_alert(changes, drift_items, q, dry, now, away_minutes=None):
         # ⚠️ if any routes moved away (reason contains "down" or "hot")
         # ✅ if ALL non-failed changes are returns (reason contains "recovered")
         all_reasons = [c.get("reason", "") for c in changes if not c.get("apply_error")]
-        has_moves_away = any("down" in r or "hot" in r or "disabled" in r for r in all_reasons)
+        has_moves_away = any("down" in r or "hot" in r or "disabled" in r or "unusable" in r for r in all_reasons)
         has_returns = any("recovered" in r for r in all_reasons)
         if has_moves_away:
             icon = "⚠️"

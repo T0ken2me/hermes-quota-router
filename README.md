@@ -165,6 +165,13 @@ read or change a real install.
   official `hermes` CLI with validated arguments.
 - Profiles in `never_touch` are never read or written.
 - An unreadable quota counts as *unknown*: nothing moves because of it.
+- **Per-profile logins are checked.** Quota is read from one account, but each profile has its own
+  logins. Before routing a profile onto a provider, the router asks Hermes, inside that profile,
+  whether it can resolve a credential (an expired OAuth token may be refreshed with that
+  provider's login server, exactly as Hermes would before a turn; the router only ever sees
+  OK / no credential, never a credential value). A profile whose login for that provider has expired
+  is never moved onto it and is moved off it; an inconclusive check never blocks anything.
+  Set `QR_SKIP_CRED_PROBE=1` to turn the check off.
 - Pay-per-use APIs only with `allow_metered: true`, only above `min_balance_usd`, flagged 💳.
 - The **Copilot probe** calls an undocumented GitHub endpoint (the one editors use) with your
   `gh` login. It is off by default; without it the plan is assumed active.
