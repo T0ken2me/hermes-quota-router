@@ -1,3 +1,31 @@
+## [0.3.0] — account-aware routing, account manager UI
+
+### Added
+- **`engine/accounts.py`** — pure fail-closed account/billing-pool selector.
+  Tracks independent accounts rather than provider labels; separate personal and
+  professional OpenAI pools; Nous emergency-gate (explicit authorisation + 50 % reserve).
+- **`engine/account_collectors.py`** — injected collector boundary with provider-specific
+  raw normalisation (Codex weekly-only/session+weekly, Anthropic closed-field allowlist,
+  Nous numeric balance); credentials never in results; malformed/unsupported shapes fail closed.
+- **`engine/account_store.py`** — atomic JSON sidecar; `credential_ref` never written to disk.
+- **Dashboard: Accounts panel** — register accounts, validate, enable/disable, set priority,
+  dry-run selection preview.
+- **Dashboard: per-account usage** — quota window gauges with freshness badge, auto-refresh.
+- **Dashboard: Switching history** — 24 h/7 d/30 d, filters, colour-coded event list,
+  SVG swimlane chart with explicit gap disclaimer.
+- **8 new REST endpoints** on `/api/plugins/quota-router/` (accounts CRUD, usage, history,
+  validate, priorities dry-run); purchased credits and auto-recharge rejected at API layer;
+  secret-prefix guard on credential handles.
+- **93 new tests** across `test_accounts` (37), `test_account_collectors` (33),
+  `test_dashboard_api` (23).
+- `docs/ACCOUNT_ROUTING.md` — collector/selector API reference.
+
+### Notes
+- Collector/selector is an injectable boundary, not native identity attestation.
+  Live auth adapters for specific providers are pending.
+- Purchased credits and auto-recharge disabled by policy.
+- Requires Hermes ≥ 1.0 with FastAPI in the managed venv.
+
 # Changelog
 
 ## Unreleased
