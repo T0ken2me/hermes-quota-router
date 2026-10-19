@@ -7,3 +7,4 @@ overrides.json
 *.jsonl
 .lock
 .env
+.venv/

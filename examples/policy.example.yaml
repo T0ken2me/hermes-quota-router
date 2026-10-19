@@ -11,7 +11,7 @@ thresholds:
   room_session: 85
   return_weekly: 55        # hysteresis: climb back up the ladder only below these
   return_session: 70
-  min_balance_usd: 2.0     # metered API needs at least this much credit to be eligible
+  min_balance_usd: 2.0     # credits must exceed this reserve; metered API needs at least this balance
 
 # Pay-per-use APIs (kind: metered) are never used unless you set this to true.
 allow_metered: false
@@ -35,7 +35,7 @@ probes:
   copilot: false
 
 # Provider kinds decide how eligibility is measured:
-#   subscription: weekly/session % below room_*   credits: balance > 0
+#   subscription: valid weekly/session % below room_*   credits: balance > min_balance_usd
 #   flat: plan active                              metered: balance >= min_balance_usd (+ allow_metered)
 kinds:
   anthropic: subscription

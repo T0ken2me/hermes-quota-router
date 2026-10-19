@@ -9,8 +9,10 @@ Test hooks: QR_FAKE='{"openai-codex":{"weekly":75}}' overrides readings; QR_STAT
 QR_NOLOG=1 skips the jsonl logs; QR_DRYRUN=1 forces dry-run (tests MUST set it).
 """
 import dataclasses, datetime as dt, json, os, re, subprocess, sys, urllib.request
+import math
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import TypeGuard
 
 # Fleet root (default profile home; named profiles live under profiles/). Override with QR_HERMES_ROOT.
 HOME = Path(os.environ.get("QR_HERMES_ROOT") or Path.home() / ".hermes")
@@ -251,6 +253,12 @@ def collect(policy=None):
     return out
 
 
+def _nonnegative_number(value: object) -> TypeGuard[int | float]:
+    """Accept real readings, not missing values, booleans, strings or NaN/Infinity."""
+    return ((type(value) is int and value >= 0)
+            or (type(value) is float and math.isfinite(value) and value >= 0))
+
+
 def status(provider, q, kind, t):
     """-> 'room' (may receive load), 'ok' (may keep load), 'hot' (should shed), 'down' (confirmed
     unusable), 'unknown' (probe failed: never a reason to move, never a destination)."""
@@ -260,20 +268,28 @@ def status(provider, q, kind, t):
     if not r.get("ok"):
         return "down"
     if kind == "subscription":
-        w, s = r.get("weekly") or 0, r.get("session") or 0
+        w, s = r.get("weekly"), r.get("session")
+        if not _nonnegative_number(w) or not _nonnegative_number(s):
+            return "unknown"
         if w >= 100 or s >= 100:
             return "down"
         if w >= t["hot_weekly"] or s >= t["hot_session"]:
             return "hot"
         return "room" if (w < t["room_weekly"] and s < t["room_session"]) else "ok"
     if kind == "credits":
-        return "room" if (r.get("credits") or 0) > 0 else "down"
+        credits, reserve = r.get("credits"), t.get("min_balance_usd", 0)
+        if not _nonnegative_number(credits) or not _nonnegative_number(reserve):
+            return "unknown"
+        return "room" if credits > reserve else "down"
     if kind == "flat":
         return "room"
     if kind == "metered":
         if not t.get("_allow_metered"):
             return "down"  # pay-per-use is opt-in: policy allow_metered: true
-        return "room" if (r.get("balance_usd") or 0) >= t["min_balance_usd"] else "down"
+        balance, minimum = r.get("balance_usd"), t.get("min_balance_usd")
+        if not _nonnegative_number(balance) or not _nonnegative_number(minimum):
+            return "unknown"
+        return "room" if balance >= minimum else "down"
     return "down"
 
 
@@ -281,7 +297,10 @@ def cooled(provider, q, kind, t):
     r = q.get(provider) or {}
     if kind != "subscription":
         return status(provider, q, kind, t) == "room"
-    return bool(r.get("ok")) and (r.get("weekly") or 0) < t["return_weekly"] and (r.get("session") or 0) < t["return_session"]
+    w, s = r.get("weekly"), r.get("session")
+    return (bool(r.get("ok")) and not r.get("unknown")
+            and _nonnegative_number(w) and _nonnegative_number(s)
+            and w < t["return_weekly"] and s < t["return_session"])
 
 
 def _t(policy):
@@ -386,10 +405,8 @@ def decide(policy, q, state, skip=(), off=None):
                 if pj != prov and pj not in dis and status(pj, q, kinds[pj], t) == "room":
                     new, why = j, f"{prov} {st}"
                     break
-        # 3) stranded on a provider the bot has disabled and nothing better: back to rung 0 and let the
-        #    bot's own reactive fallback chain handle a 429 — a disabled provider never resolves at all.
-        if new == cur and prov in dis and cur != 0:
-            new, why = 0, f"{prov} disabled in {bot} config"
+        # If no rung qualifies, keep the configured route: an unconditional jump
+        # to rung 0 would bypass unknown-quota, disabled-provider and reserve guards.
         if new != cur:
             to = ladder[new]
             changes.append({"scope": scope, "bot": bot, "class": cls, "from": ladder[cur], "to": to, "rung": new,

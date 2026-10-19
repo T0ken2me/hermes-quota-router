@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Credibility and routing boundaries
+- Added a labelled, reproducible synthetic dashboard screenshot, a minimal policy walkthrough,
+  explicit compatibility/integration limitations and a read-only CI badge.
+- Added isolated Python 3.11–3.14 Linux / 3.14 macOS CI; test dependencies no longer require
+  a local Hermes checkout. Tests do not bootstrap or inherit credentials from a live install.
+- Fixed missing or malformed subscription percentages being treated as unused quota;
+  recovery uses the same validity guard. Added boundary and decision-path regressions.
+- Applied `min_balance_usd` to credit-provider admission, with strict greater-than semantics;
+  malformed balances remain unknown. This is not a hard provider-side spending cap.
+- Removed the unconditional return to rung 0 when a current provider is disabled: it could
+  bypass both unknown-quota and credit-reserve guards. With no eligible destination, stay put.
+- Applied the same malformed-number guard to opt-in metered balances, preserving their
+  existing inclusive minimum-balance boundary and explicit opt-in requirement.
+- Preserved attribution and the separate unfinished account-routing work; no live-install update.
+
 ### Added
 - **Readable grouped Telegram alerts.** `format_alert()` is a new pure function
   (unit-testable, no side effects) that replaces the raw per-scope bullet list.

@@ -1,7 +1,10 @@
 # Hermes Quota Router
 
-Keeps your [Hermes](https://github.com/NousResearch/hermes-agent) bots running on whichever AI
-subscription still has headroom, instead of hitting one plan's limit mid-task.
+[![Tests](https://github.com/T0ken2me/hermes-quota-router/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/T0ken2me/hermes-quota-router/actions/workflows/tests.yml)
+
+Policy-driven subscription fallback for [Hermes Agent](https://github.com/NousResearch/hermes-agent).
+Monitor provider usage, define which models each profile may use, and inspect proposed switches
+before enabling automatic changes. Useful when you run several profiles across subscriptions.
 
 Every 30 minutes a zero-token cron job reads your usage (Claude, ChatGPT/Codex, Nous credit,
 optionally Copilot, DeepSeek/OpenRouter balances) and moves each bot's model — main, subagents,
@@ -12,6 +15,26 @@ auxiliary tasks, cron jobs — down or back up a per-task ladder:
 You control it with `/quota` (CLI, TUI, desktop app, and — if you allow it — chat), from a
 **dashboard tab**, or from a **desktop-app page**. All of them drive the same engine.
 How it decides: [docs/DESIGN.md](docs/DESIGN.md).
+
+[![Quota Router dashboard: synthetic quotas, routes and spend](docs/images/dashboard.png)](docs/images/dashboard.png)
+
+*Actual plugin JavaScript rendered in Chromium with synthetic data and lightweight SDK wrappers.
+No live accounts, credentials or provider calls. The fixture theme is not a complete Hermes installation.*
+
+## Requirements and compatibility
+
+- **Plugin:** a Hermes installation with plugin/dashboard SDK support, `hermes` on `PATH`,
+  and working logins for the providers in your policy. Model IDs are chosen by you, not discovered here.
+- **Platforms:** macOS and Linux. The engine uses POSIX file locking; Windows is not supported.
+- **Standalone tests:** Python 3.11–3.14; CI covers those versions on Linux and 3.14 on macOS.
+  Tests do not require Hermes or provider credentials.
+- **Hermes compatibility:** no minimum Hermes release or full release-by-release integration
+  matrix has been established. Private SDK imports and CLI changes can break probes or installation.
+  Start in dry-run and check your installed CLI before enabling enforcement.
+
+This is provider-level routing, **not exact account/grant binding, quota reservation or a guarantee
+that a task will finish before a limit**. A 30-minute polling interval cannot prevent every 429.
+The account-aware prototype is separate from this stable branch.
 
 ## Contents
 
@@ -60,6 +83,42 @@ Then:
 
 Update later: `git pull && bash scripts/install.sh`.
 
+## A small policy you can understand
+
+Use this instead of the starter policy for one profile. Replace the uppercase model placeholders
+with IDs your Hermes installation supports, and ensure the `coder` profile has the relevant logins.
+
+```yaml
+mode: dry_run
+allow_metered: false
+thresholds:
+  hot_weekly: 70
+  hot_session: 85
+  room_weekly: 50
+  room_session: 50
+  return_weekly: 55
+  return_session: 70
+  min_balance_usd: 8
+kinds:
+  openai-codex: subscription
+  anthropic: subscription
+  nous: credits
+classes:
+  coding:
+    - [openai-codex, YOUR_CODEX_MODEL]
+    - [anthropic, YOUR_CLAUDE_MODEL]
+    - [nous, YOUR_NOUS_MODEL]
+scopes:
+  coder.main: coding
+```
+
+With Codex at 75% weekly usage and Anthropic at 20% weekly / 5% session usage,
+an unheld route on Codex proposes moving to Anthropic. Once Codex falls below the return
+and admission thresholds, it can move back. Missing or malformed subscription windows are
+**unknown**, not zero. Nous is eligible only when its reported balance is **strictly above $8**;
+at $8 it cannot receive routes. That is an admission reserve, not a hard spending cap on
+already-running requests. Metered API rungs remain disabled.
+
 ## Using it
 
 ```
@@ -94,7 +153,7 @@ network calls.
 - **Per-profile table**: cost and tokens broken down by Hermes profile.
 - **Per-model table**: top models by estimated cost, token counts, session count.
 - **Top sessions**: profile, shortened session ID, model(s), date, tokens, cost —
-  **never session titles** (titles can contain client or matter names).
+  **never session titles** (they can contain sensitive information).
 
 Profiles listed in `never_touch` in your policy are completely skipped — their `state.db`
 is never opened. Rows where cost provenance is unknown are counted for tokens but their cost
@@ -106,7 +165,8 @@ at `004c18a7`, MIT. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Dashboard login and remote access (optional)
 
-Locally the dashboard needs no login: run `hermes dashboard` and open the **Quota Router** tab.
+Run `hermes dashboard` and open the **Quota Router** tab; authentication follows your Hermes
+dashboard configuration. Do not disable an existing login gate.
 To reach it from other devices, use Tailscale — never plain LAN or the internet. The dashboard
 shows much more than quotas: chat history, the API-key editor, a terminal.
 
@@ -141,8 +201,17 @@ Tip: a Tailscale ACL can limit port 443 on that machine to the devices that shou
 ## Tests
 
 ```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements-test.txt
 bash tests/run_all.sh
 ```
+
+The runner uses the active `python3` (or `HERMES_PY=/absolute/path/to/python`), a temporary
+home directory and a stripped environment. The unit harness stubs Hermes bootstrap and CLI
+effects; API tests mount the plugin on a test FastAPI app. This proves isolated behavior,
+**not live provider authentication or full Hermes integration**. API error-sanitization tests
+deliberately log a synthetic internal exception while verifying it is not returned to the caller.
 
 - `test_ladder` — fallback order, hysteresis, unknown readings, pay-per-use opt-in, dry-run.
 - `test_security` — policy validation (path traversal, odd model ids), `never_touch`,
@@ -152,25 +221,50 @@ bash tests/run_all.sh
 - `test_spend` — spend engine: per-profile/model/day aggregations, `never_touch` DB never
   opened, read-only (mtime unchanged), no `title` key anywhere in sessions, day boundaries,
   pricing-unknown rows omitted from totals, limit enforcement.
+- `test_quota_boundaries` — missing/invalid percentages, zero usage, recovery eligibility,
+  credit reserve boundaries and real decision-path regressions.
+- `test_portability` — poisoned-bootstrap subprocess tests: no live Hermes bootstrap is imported.
 
 They use a temporary copy of the example policy with the Hermes CLI fenced off, so they cannot
-read or change a real install.
+read or change a real install through their stubbed engine operations. This harness is not an OS sandbox.
+
+### Reproduce the screenshot
+
+```bash
+python -m pip install playwright==1.64.0
+python -m playwright install chromium
+python scripts/capture_demo.py
+```
+
+This optional command downloads pinned React/ReactDOM 18.3.1 from jsDelivr and renders the
+repository's actual frontend. Browser network requests are blocked, API data is an explicit
+fixture, and mutation calls are rejected. It checks headings, route filtering and page errors
+before writing `docs/images/dashboard.png`. It does not contact provider accounts.
 
 ## Safety notes
 
-- **Nothing leaves your machine** except each provider's own usage/balance check, sent with the
-  key Hermes already holds for that provider. No telemetry, no third-party service.
-- **No credentials** in this repo or in the files it writes. Your policy holds names and model ids.
+- **Routing probes** send usage/balance requests to the provider with the credential Hermes
+  holds for that provider. No telemetry. The optional screenshot generator separately downloads
+  public React assets from jsDelivr; it does not read accounts.
+- Policy/state should contain names and model IDs, not credentials. Provider logins remain in
+  Hermes-managed storage; optional dashboard setup writes a password hash and signing secret
+  to the protected Hermes environment file. Never commit runtime files or screenshots of real accounts.
 - **What it can change:** the model/provider of the routes you list — nothing else — through the
   official `hermes` CLI with validated arguments.
 - Profiles in `never_touch` are never read or written.
 - An unreadable quota counts as *unknown*: nothing moves because of it.
+- Both subscription windows must be finite nonnegative numbers for ordinary admission/recovery.
+  Credit balances must also be valid numbers and exceed `min_balance_usd`; an absent threshold
+  preserves the legacy positive-balance rule. This does not cap provider-side spending.
+- If the current provider is unusable and no destination qualifies, no switch is made; operator
+  intervention may be required. The router does not return blindly to an ineligible first rung.
 - **Per-profile logins are checked.** Quota is read from one account, but each profile has its own
   logins. Before routing a profile onto a provider, the router asks Hermes, inside that profile,
   whether it can resolve a credential (an expired OAuth token may be refreshed with that
   provider's login server, exactly as Hermes would before a turn; the router only ever sees
-  OK / no credential, never a credential value). A profile whose login for that provider has expired
-  is never moved onto it and is moved off it; an inconclusive check never blocks anything.
+  OK / no credential, never a credential value). A definite missing credential excludes that
+  destination and triggers a search for an eligible alternative; if none exists the route stays
+  configured as-is and may remain unusable. An inconclusive credential check does not block a provider.
   Set `QR_SKIP_CRED_PROBE=1` to turn the check off.
 - Pay-per-use APIs only with `allow_metered: true`, only above `min_balance_usd`, flagged 💳.
 - The **Copilot probe** calls an undocumented GitHub endpoint (the one editors use) with your
