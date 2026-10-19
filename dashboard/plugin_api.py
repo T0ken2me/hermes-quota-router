@@ -30,7 +30,7 @@ router = APIRouter()
 _WINDOW, _MAX_WRITES, _RUN_GAP = 60.0, 20, 30.0
 _lock = threading.Lock()
 _writes: list[float] = []
-_last_run = [0.0]
+_last_run: list[float | None] = [None]
 
 
 def _same_origin(request: Request) -> None:
@@ -84,7 +84,7 @@ async def decisions(n: int = 60):
 async def run_now():
     now = time.monotonic()
     with _lock:
-        if now - _last_run[0] < _RUN_GAP:
+        if _last_run[0] is not None and now - _last_run[0] < _RUN_GAP:
             raise HTTPException(status_code=429, detail="a run just happened, wait 30 s")
         _last_run[0] = now
     return {"lines": await _call(engine().run, "dashboard")}

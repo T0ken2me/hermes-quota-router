@@ -3,6 +3,8 @@
 ## Unreleased
 
 ### Credibility and routing boundaries
+- Fixed first-run API throttling on fresh runners/low monotonic epochs. An explicit never-run
+  sentinel replaces timestamp zero; a deterministic clock test covers first call and retry boundary.
 - Added a labelled, reproducible synthetic dashboard screenshot, a minimal policy walkthrough,
   explicit compatibility/integration limitations and a read-only CI badge.
 - Added isolated Python 3.11–3.14 Linux / 3.14 macOS CI; test dependencies no longer require
