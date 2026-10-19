@@ -41,7 +41,7 @@ R.check(r.status_code == 500 and "secret" not in r.text and "token" not in r.tex
 api._writes.clear()
 codes = [c.post(B + "/release", json={"scope": "coder.main"}, headers=J).status_code for _ in range(25)]
 R.check(429 in codes, "mutations rate limited")
-api._last_run[0] = 0; api._writes.clear()
+api._last_run[0] = None; api._writes.clear()
 m.collect = lambda policy=None: {}
 r1 = c.post(B + "/run", json={}, headers=J).status_code
 r2 = c.post(B + "/run", json={}, headers=J).status_code
