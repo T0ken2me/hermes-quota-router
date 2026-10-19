@@ -19,17 +19,6 @@ sys.path.insert(0, str(HERE))
 # Harness utilities
 # ---------------------------------------------------------------------------
 
-_hermes_src = Path(os.environ.get("QR_HERMES_ROOT", "")) / "hermes-agent"
-if not _hermes_src.is_dir():
-    _hermes_src = Path.home() / ".hermes" / "hermes-agent"
-if _hermes_src.is_dir():
-    sys.path.insert(0, str(_hermes_src))
-try:
-    import hermes_bootstrap  # noqa: F401
-except ImportError:
-    pass
-
-
 class Results:
     def __init__(self):
         self.fails = 0

@@ -24,7 +24,7 @@ Each task class has an ordered ladder. Provider **kinds** decide eligibility:
 | kind | eligible when |
 |---|---|
 | subscription | weekly < `room_weekly` and session < `room_session` |
-| credits (Nous) | credit > 0 |
+| credits (Nous) | valid balance > `min_balance_usd` (defaults to 0 if absent) |
 | flat (Copilot) | plan active |
 | metered API | `allow_metered: true` and balance ≥ `min_balance_usd` |
 
@@ -38,7 +38,10 @@ rung at all, and `vision` lists only image-capable models.
 - **Hot**: a subscription at/over `hot_weekly` or `hot_session` sheds its routes.
 - **Hysteresis**: a route climbs back only when the preferred rung is below `return_*`
   (or its window reset) — prevents flapping.
-- **Unknown ≠ exhausted**: a failed probe never moves a route and never makes a provider a target.
+- **Unknown ≠ zero**: missing, boolean, negative, non-finite or nonnumeric subscription windows
+  do not count as spare capacity; both windows must be valid for admission and recovery.
+  Invalid credit balances are unknown. A credit balance equal to the reserve is ineligible.
+  The reserve is an admission threshold, not a transactional spending cap.
 - **Drift**: if a live setting differs from what the router last applied (someone edited it by
   hand), the router notifies once and **holds** that route — it never reverts a manual change.
 - **Holds / Force**: `hold` freezes a route; `force <rung>` moves it now *and* holds it; `release`

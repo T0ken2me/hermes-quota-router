@@ -81,11 +81,11 @@ ch = m.decide(pol, q, st, off=lambda b: {"copilot"})
 R.check(all(c["to"][0] != "copilot" for c in ch), "disabled provider (copilot) never chosen")
 ch_all = m.decide(pol, q, st, off=lambda b: set())
 R.check(any(c["to"][0] == "copilot" for c in ch_all), "control: same readings without the block do pick copilot")
-# stranded on a disabled rung with nothing better -> back to rung 0
+# A disabled current provider does not authorise an ineligible destination.
 wk = [s for s, c in pol["scopes"].items() if len(pol["classes"][c]) > 3 and pol["classes"][c][3][0] == "copilot"][0]
 ch = m.decide(pol, readings(anthropic={"weekly": 100}, **{"openai-codex": {"weekly": 100}}, nous={"ok": False},
                             deepseek={"balance_usd": 0}), {wk: 3}, off=lambda b: {"copilot"})
-R.check(any(c["scope"] == wk and c["rung"] == 0 for c in ch), "stranded on disabled provider -> back to rung 0")
+R.check(not any(c["scope"] == wk for c in ch), "disabled current, no eligible rung -> no unsafe switch")
 # a provider whose quota reads healthy but which THIS bot cannot log in to (2026-10-12 incident: account-level
 # Anthropic quota fine, one profile's own OAuth login expired -> router kept it on Anthropic -> "No credentials")
 m, tmp2 = load_engine(allow_metered)

@@ -1,0 +1,7 @@
+# Standalone test dependencies; Hermes itself is deliberately not installed.
+# Direct dependencies used by CI; this is not a complete transitive lockfile.
+PyYAML==6.0.3
+python-dotenv==1.2.4
+ruamel.yaml==0.19.1
+fastapi==0.148.0
+httpx==0.28.1

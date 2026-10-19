@@ -5,16 +5,13 @@ import os
 import shutil
 import sys
 import tempfile
+import types
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent.parent
-_hermes = Path(os.environ.get("QR_HERMES_ROOT") or Path.home() / ".hermes") / "hermes-agent"
-if _hermes.is_dir():
-    sys.path.insert(0, str(_hermes))
-try:  # Hermes may re-launch into its managed interpreter here; do it before anything else is imported
-    import hermes_bootstrap  # noqa: F401,E402
-except ImportError:
-    pass
+# Unit tests exercise our engine, not Hermes installation/bootstrap side effects.
+# The production import remains unchanged; only this test process gets the stub.
+sys.modules["hermes_bootstrap"] = types.ModuleType("hermes_bootstrap")
 
 FULL = {"anthropic": {"ok": True, "weekly": 20, "session": 5}, "openai-codex": {"ok": True, "weekly": 20, "session": 5},
         "nous": {"ok": True, "credits": 100}, "copilot": {"ok": True, "plan": "individual"},

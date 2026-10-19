@@ -1,12 +1,16 @@
 #!/bin/bash
-# Run every test. They use temporary copies of the example policy and cannot touch a live install.
-set -u
+# Portable isolated tests: no installed Hermes, real accounts or provider calls.
+set -eu
 cd "$(dirname "$0")"
-PY="${HERMES_PY:-$HOME/.hermes/hermes-agent/venv/bin/python}"
-export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
+PY="$(command -v "${HERMES_PY:-python3}")"
+SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/qr-suite.XXXXXX")"
+trap 'rm -rf "$SANDBOX"' EXIT
 rc=0
-for t in test_ladder test_security test_api test_alert test_spend; do
-  echo "### $t"
-  "$PY" "$t.py" || rc=1
+for test in test_*.py; do
+  echo "### ${test%.py}"
+  env -i PATH="$PATH" HOME="$SANDBOX" TMPDIR="$SANDBOX" \
+    HERMES_HOME="$SANDBOX" QR_HERMES_ROOT="$SANDBOX" \
+    HERMES_DISABLE_LAZY_INSTALLS=1 PYTHONPATH="$PWD" \
+    PYTHONIOENCODING=utf-8 "$PY" "$test" || rc=1
 done
-exit $rc
+exit "$rc"
